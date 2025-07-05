@@ -17,9 +17,20 @@
  */
 
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Partials, Events, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { Rcon } from 'rcon-srcds';
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  Events,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  PermissionFlagsBits
+} from 'discord.js';
+import pkg from 'rcon-srcds';
+const { Rcon } = pkg;
 import Database from 'better-sqlite3';
+
 
 
 /* ────── ENV ────── */
