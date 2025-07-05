@@ -29,7 +29,9 @@ import {
 } from 'discord.js';
 import pkg from 'rcon-srcds';
 const { Rcon } = pkg;
-import Database from 'better-sqlite3';
+import sqlite3 from 'sqlite3';
+const db = new sqlite3.Database('./conanbot.db');
+
 
 
 
