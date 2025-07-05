@@ -6,10 +6,11 @@
   "scripts": {
     "start": "node index.js"
   },
-  "dependencies": {
-    "sqlite3": "^5.1.6",
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.3.1",
-    "rcon-srcds": "^1.2.1"
-  }
+"dependencies": {
+  "discord.js": "^14.14.1",
+  "dotenv": "^16.3.1",
+  "rcon-srcds": "^1.2.1",
+  "sqlite3": "^5.1.6"
+}
+
 }
