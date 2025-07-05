@@ -16,19 +16,11 @@
  *   npm i discord.js rcon-srcds better-sqlite3 dotenv
  */
 
-require('dotenv').config();
-const {
-  Client,
-  GatewayIntentBits,
-  Partials,
-  Events,
-  REST,
-  Routes,
-  SlashCommandBuilder,
-  PermissionFlagsBits
-} = require('discord.js');
-const { Rcon } = require('rcon-srcds');
-const Database = require('better-sqlite3');
+import 'dotenv/config';
+import { Client, GatewayIntentBits, Partials, Events, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+import { Rcon } from 'rcon-srcds';
+import Database from 'better-sqlite3';
+
 
 /* ────── ENV ────── */
 const { BOT_TOKEN, DATABASE_PATH = './conanbot.db' } = process.env;
