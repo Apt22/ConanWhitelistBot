@@ -3,7 +3,9 @@
 import { Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder, Partials } from 'discord.js';
 import dotenv from 'dotenv';
 import sqlite3 from 'better-sqlite3';
-import { Rcon } from 'rcon-srcds';
+import rconPkg from 'rcon-srcds';
+const { Rcon } = rconPkg;
+
 
 dotenv.config();
 
