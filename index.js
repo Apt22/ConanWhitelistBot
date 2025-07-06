@@ -10,22 +10,19 @@ import {
   Partials,
 } from 'discord.js';
 import dotenv from 'dotenv';
-import sqlite3 from 'better-sqlite3';
-
-/* ─── RCON import: one-line fix ─── */
-import rconPkg from 'rcon-srcds';
-const { Rcon } = rconPkg;            // ✅ Rcon is now the real constructor
+import Database from 'better-sqlite3';
+import Rcon from 'rcon-srcds';          // ✅ default export is the constructor
 
 dotenv.config();
 
+/* ─── Discord client ─── */
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
   partials: [Partials.GuildMember],
 });
 
-const db = sqlite3('steam.db');
-
-/* ─── SQLite schema ─── */
+/* ─── SQLite DB ─── */
+const db = new Database('steam.db');
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   discord_id TEXT PRIMARY KEY,
@@ -40,7 +37,6 @@ CREATE TABLE IF NOT EXISTS config (
 );
 `);
 
-/* ─── DB helpers ─── */
 function setSteam(discordId, steamId) {
   db.prepare(
     'REPLACE INTO users (discord_id, steam_id) VALUES (?, ?)'
@@ -73,7 +69,7 @@ async function sendConan(cmd, steamId, cfg) {
     password: cfg.rcon_password,
   });
 
-  rcon.connect(); // synchronous in rcon-srcds
+  rcon.connect(); /* synchronous in rcon-srcds */
   try {
     const resp = await rcon.send(`${cmd} ${steamId}`);
     console.log(`[RCON] ${cmd} ${steamId} → ${String(resp).trim()}`);
@@ -93,14 +89,13 @@ async function notifyDM(member, text) {
   }
 }
 
-/* ─── Slash-command setup ─── */
+/* ─── Slash-commands ─── */
 const commands = [
   new SlashCommandBuilder()
     .setName('linksteam')
     .setDescription('Link your Steam64 ID.')
     .addStringOption((o) =>
-      o
-        .setName('steamid')
+      o.setName('steamid')
         .setDescription('17-digit Steam64 ID')
         .setRequired(true)
     ),
@@ -109,24 +104,30 @@ const commands = [
     .setDescription('Unlink your stored Steam64 ID.'),
   new SlashCommandBuilder()
     .setName('setconfig')
-    .setDescription('Admin: configure RCON and whitelist role.')
+    .setDescription('Admin: configure RCON & whitelist role.')
     .addRoleOption((o) =>
-      o
-        .setName('role')
+      o.setName('role')
         .setDescription('Role that triggers whitelisting')
         .setRequired(true)
     )
     .addStringOption((o) =>
-      o.setName('host').setDescription('RCON host / IP').setRequired(true)
+      o.setName('host')
+        .setDescription('RCON host/IP')
+        .setRequired(true)
     )
     .addIntegerOption((o) =>
-      o.setName('port').setDescription('RCON port').setRequired(true)
+      o.setName('port')
+        .setDescription('RCON port')
+        .setRequired(true)
     )
     .addStringOption((o) =>
-      o.setName('password').setDescription('RCON password').setRequired(true)
+      o.setName('password')
+        .setDescription('RCON password')
+        .setRequired(true)
     ),
 ].map((c) => c.toJSON());
 
+/* Register globally (one-time) */
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 await rest.put(
   Routes.applicationCommands(process.env.CLIENT_ID),
@@ -137,7 +138,7 @@ await rest.put(
 client.on(Events.InteractionCreate, async (i) => {
   if (!i.isChatInputCommand()) return;
 
-  /* linksteam */
+  /* /linksteam */
   if (i.commandName === 'linksteam') {
     const steamId = i.options.getString('steamid')?.trim();
     if (!/^\d{17}$/.test(steamId))
@@ -160,7 +161,7 @@ client.on(Events.InteractionCreate, async (i) => {
     return;
   }
 
-  /* unlinksteam */
+  /* /unlinksteam */
   if (i.commandName === 'unlinksteam') {
     const row = getSteam(i.user.id);
     if (!row)
@@ -180,7 +181,7 @@ client.on(Events.InteractionCreate, async (i) => {
     return;
   }
 
-  /* setconfig */
+  /* /setconfig */
   if (i.commandName === 'setconfig') {
     const cfg = {
       guild_id: i.guild.id,
@@ -193,7 +194,6 @@ client.on(Events.InteractionCreate, async (i) => {
     await i.reply(
       `✅ Config saved.\nRole: <@&${cfg.whitelist_role_id}> • RCON: ${cfg.rcon_host}:${cfg.rcon_port}`
     );
-    return;
   }
 });
 
