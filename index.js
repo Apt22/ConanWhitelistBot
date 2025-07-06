@@ -1,179 +1,114 @@
-/*───────────────────────────────────────────────────────────────
-  Conan-Discord Whitelist Bot  –  SQLite3 + DM notice + fixed Rcon import
-────────────────────────────────────────────────────────────────*/
-
+import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
+import Rcon from 'rcon-srcds';
 import 'dotenv/config';
-import {
-  Client,
-  GatewayIntentBits,
-  Partials,
-  Events,
-  PermissionFlagsBits
-} from 'discord.js';
+import fs from 'fs';
 
-import Rcon from 'rcon-srcds';          // ✅ default export *is* the constructor
-import sqlite3 from 'sqlite3';
-import { promisify } from 'util';
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ],
+  partials: [Partials.GuildMember]
+});
 
-/*────────── ENV ─────────*/
-const { BOT_TOKEN, DATABASE_PATH = './conanbot.db' } = process.env;
+const steamLinkFile = './steam_links.json';
+const whitelistRoleName = 'Whitelisted';
 
-/*───────── DB SETUP ─────*/
-sqlite3.verbose();
-const db = new sqlite3.Database(DATABASE_PATH);
+// Load Steam links from file
+let steamLinks = {};
+if (fs.existsSync(steamLinkFile)) {
+  steamLinks = JSON.parse(fs.readFileSync(steamLinkFile));
+}
 
-const dbRun = promisify(db.run.bind(db));
-const dbGet = promisify(db.get.bind(db));
+// Save Steam links
+function saveSteamLinks() {
+  fs.writeFileSync(steamLinkFile, JSON.stringify(steamLinks, null, 2));
+}
 
-await dbRun(`CREATE TABLE IF NOT EXISTS links (
-  discord_id TEXT PRIMARY KEY,
-  steam_id   TEXT NOT NULL
-);`);
-await dbRun(`CREATE TABLE IF NOT EXISTS server_configs (
-  guild_id           TEXT PRIMARY KEY,
-  whitelist_role_id  TEXT NOT NULL,
-  rcon_host          TEXT NOT NULL,
-  rcon_port          INTEGER NOT NULL,
-  rcon_password      TEXT NOT NULL
-);`);
+// Get config from .env
+function getRconConfig(guildId) {
+  return {
+    rcon_host: process.env.RCON_HOST,
+    rcon_port: parseInt(process.env.RCON_PORT, 10),
+    rcon_password: process.env.RCON_PASSWORD
+  };
+}
 
-const setSteam    = (id, sid) => dbRun('INSERT OR REPLACE INTO links VALUES (?, ?)', [id, sid]);
-const getSteam    = id => dbGet('SELECT steam_id FROM links WHERE discord_id = ?', [id]);
-const deleteSteam = id => dbRun('DELETE FROM links WHERE discord_id = ?', [id]);
-
-const setConfig = cfg => dbRun(`
-  INSERT OR REPLACE INTO server_configs
-  VALUES (?, ?, ?, ?, ?)`,
-  [cfg.guild_id, cfg.whitelist_role_id, cfg.rcon_host, cfg.rcon_port, cfg.rcon_password]
-);
-const getConfig = gid => dbGet('SELECT * FROM server_configs WHERE guild_id = ?', [gid]);
-
-/*──────── RCON helper ───────*/
+// Send RCON command
 async function sendConan(cmd, steamId, cfg) {
+  if (!cfg || !steamId) return;
+
   const rcon = new Rcon({
     host: cfg.rcon_host,
     port: cfg.rcon_port,
     password: cfg.rcon_password
   });
 
-  await rcon.connect();
-  const resp = await rcon.send(`${cmd} ${steamId}`);
-  console.log(`[RCON] ${cmd} ${steamId} → ${resp.trim()}`);
-  rcon.disconnect();
+  try {
+    rcon.connect(); // ← no await
+
+    const response = await rcon.send(`${cmd} ${steamId}`);
+    console.log(`[RCON] ${cmd} ${steamId} → ${response.trim()}`);
+  } catch (err) {
+    console.error(`[RCON] Failed:`, err);
+  } finally {
+    rcon.disconnect();
+  }
 }
 
-/*──────── DM helper ───────*/
-async function notifyDM(member, text) {
-  try { await member.send(text); }
-  catch {/* user disabled DMs */}
-}
-
-/*──────── Discord client ────*/
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
-  partials: [Partials.GuildMember]
+// Bot Ready
+client.once(Events.ClientReady, () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-client.once(Events.ClientReady, async () => {
-  console.log(`[Discord] Ready as ${client.user.tag}`);
-
-  await client.application.commands.set([
-    {
-      name: 'linksteam',
-      description: 'Link your SteamID64 so staff can whitelist you',
-      options: [{ name: 'steamid', type: 3, description: '17-digit SteamID64', required: true }]
-    },
-    { name: 'unlinksteam', description: 'Remove your linked SteamID64' },
-    {
-      name: 'setconfig',
-      description: 'Configure RCON & whitelist role (admin only)',
-      default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
-      options: [
-        { name: 'role',     type: 8, description: 'Whitelist role', required: true },
-        { name: 'host',     type: 3, description: 'RCON host/IP',   required: true },
-        { name: 'port',     type: 4, description: 'RCON port',      required: true },
-        { name: 'password', type: 3, description: 'RCON password',  required: true }
-      ]
-    }
-  ]);
-});
-
-/*──────── Slash-command logic ────*/
+// Slash command for /linksteam
 client.on(Events.InteractionCreate, async i => {
   if (!i.isChatInputCommand()) return;
 
-  /* /linksteam */
-  if (i.commandName === 'linksteam') {
-    const steamId = i.options.getString('steamid').trim();
-    if (!/^\d{17}$/.test(steamId))
-      return i.reply({ content: '❌ Invalid SteamID64.', flags: 64 });
+  const steamId = i.options.getString('steamid');
+  const userId = i.user.id;
 
-    await setSteam(i.user.id, steamId);
-    await i.reply({ content: `✅ Stored **${steamId}**.\nAsk a mod for the whitelist role!`, flags: 64 });
-
-    const cfg = await getConfig(i.guild.id);
-    if (cfg) {
-      const member = await i.guild.members.fetch(i.user.id);
-      if (member.roles.cache.has(cfg.whitelist_role_id)) {
-        await sendConan('whitelist add', steamId, cfg);
-        await notifyDM(member, `✅ You’ve been **whitelisted** on the Conan server!`);
-      }
-    }
+  if (!/^\d{17}$/.test(steamId)) {
+    return await i.reply({ content: '❌ Invalid Steam64 ID.', flags: 64 });
   }
 
-  /* /unlinksteam */
-  if (i.commandName === 'unlinksteam') {
-    const row = await getSteam(i.user.id);
-    if (!row)
-      return i.reply({ content: '❌ You have no SteamID linked.', flags: 64 });
+  steamLinks[userId] = steamId;
+  saveSteamLinks();
 
-    await deleteSteam(i.user.id);
-    await i.reply({ content: '🗑️ Unlinked your SteamID.', flags: 64 });
+  await i.reply({ content: `✅ Stored Steam64 ID: ${steamId}`, flags: 64 });
+});
 
-    const cfg = await getConfig(i.guild.id);
-    if (cfg) {
-      const member = await i.guild.members.fetch(i.user.id);
-      if (member.roles.cache.has(cfg.whitelist_role_id)) {
-        await sendConan('whitelist remove', row.steam_id, cfg);
-        await notifyDM(member, `❌ You’ve been **removed from the whitelist**.`);
-      }
-    }
-  }
+// Slash command for /unlinksteam
+client.on(Events.InteractionCreate, async i => {
+  if (!i.isChatInputCommand()) return;
+  if (i.commandName !== 'unlinksteam') return;
 
-  /* /setconfig */
-  if (i.commandName === 'setconfig') {
-    const cfg = {
-      guild_id:           i.guild.id,
-      whitelist_role_id:  i.options.getRole('role').id,
-      rcon_host:          i.options.getString('host'),
-      rcon_port:          i.options.getInteger('port'),
-      rcon_password:      i.options.getString('password')
-    };
-    await setConfig(cfg);
-    await i.reply(`✅ Config saved.\nRole: <@&${cfg.whitelist_role_id}> • RCON: ${cfg.rcon_host}:${cfg.rcon_port}`);
+  const userId = i.user.id;
+  delete steamLinks[userId];
+  saveSteamLinks();
+
+  await i.reply({ content: '✅ Steam64 ID unlinked.', flags: 64 });
+});
+
+// Whitelist when role is added
+client.on(Events.GuildMemberUpdate, async (before, after) => {
+  const added = after.roles.cache.filter(r => !before.roles.cache.has(r.id));
+  const whitelistRole = added.find(r => r.name === whitelistRoleName);
+  if (!whitelistRole) return;
+
+  const steamId = steamLinks[after.id];
+  if (!steamId) return;
+
+  const config = getRconConfig(after.guild.id);
+  await sendConan('whitelist add', steamId, config);
+
+  // DM the user
+  try {
+    await after.send(`✅ You have been whitelisted on the Conan Exiles server! (Steam64 ID: ${steamId})`);
+  } catch (err) {
+    console.warn(`Could not DM user ${after.user.tag}`);
   }
 });
 
-/*──────── Role-watch automation ────*/
-client.on(Events.GuildMemberUpdate, async (oldM, newM) => {
-  const cfg = await getConfig(newM.guild.id);
-  if (!cfg) return;
-
-  const had = oldM.roles.cache.has(cfg.whitelist_role_id);
-  const has = newM.roles.cache.has(cfg.whitelist_role_id);
-  if (had === has) return;
-
-  const row = await getSteam(newM.id);
-  if (!row) return;
-
-  if (has) {
-    await sendConan('whitelist add', row.steam_id, cfg);
-    await notifyDM(newM, `✅ You’ve been **whitelisted** on the Conan server!`);
-  } else {
-    await sendConan('whitelist remove', row.steam_id, cfg);
-    await notifyDM(newM, `❌ You’ve been **removed from the whitelist**.`);
-  }
-});
-
-/*──────── Start bot ─────────*/
-client.login(BOT_TOKEN);
+// Login
+client.login(process.env.DISCORD_TOKEN);
